@@ -1,0 +1,17 @@
+{
+  "name": "gridwise-llm",
+  "version": "1.0.0",
+  "description": "BUP CSE Fest 2026 — GridWise LLM-Assisted Energy Optimization",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "express": "^4.21.0",
+    "glpk.js": "^4.0.0",
+    "dotenv": "^16.4.0"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules
+npm-debug.log
+.env
+.git
+.gitignore
+*.md
+BUP_CSE_FEST_2026_*
+test.js
