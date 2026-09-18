@@ -277,8 +277,10 @@ Your ONLY job is to classify each operator note into exactly one supported direc
 - "from 6 PM until 10 PM" → hours [18, 19, 20, 21]
 - "from 2 AM until 5 AM" → hours [2, 3, 4]
 - "from noon until 2 PM" → hours [12, 13]
-- "from 11 AM and 2 PM" → hours [11, 12, 13]
+- "from 11 AM to 2 PM" → hours [11, 12, 13]
 - "between 2 PM and 4 PM" → hours [14, 15]
+- "between 13:00 and 15:00" → hours [13, 14]
+- "during the 1-3 PM window" → hours [13, 14]
 - Hours must be unique integers 0-23 in ascending order.
 
 ## Notes to interpret
