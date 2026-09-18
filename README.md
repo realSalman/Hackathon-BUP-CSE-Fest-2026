@@ -256,6 +256,31 @@ curl -X POST http://localhost:3000/optimize-energy \
 
 ## Docker Fallback
 
+A public Docker image is available on Docker Hub:
+
+```bash
+# Pull by exact digest (immutable)
+docker pull realsalman/gridwise-llm@sha256:627dd194b556afac816e0860f6dbb8a9a30155e0ef29687acd4822a5aaf933d7
+
+# Or by tag
+docker pull realsalman/gridwise-llm:latest
+```
+
+### Run the container
+
+```bash
+docker run -d -p 3000:3000 \
+  -e OPENROUTER_API_KEY=your-openrouter-key \
+  -e GEMINI_API_KEY=your-gemini-key \
+  --name gridwise realsalman/gridwise-llm@sha256:627dd194b556afac816e0860f6dbb8a9a30155e0ef29687acd4822a5aaf933d7
+
+# Verify service is ready:
+curl http://localhost:3000/health
+# → {"status":"ok"}
+```
+
+### Build locally (alternative)
+
 ```bash
 cd backend
 docker build -t gridwise-llm .
@@ -264,12 +289,11 @@ docker run -d -p 3000:3000 \
   -e GEMINI_API_KEY=your-key \
   --name gridwise gridwise-llm
 
-# Verify:
 curl http://localhost:3000/health
 # → {"status":"ok"}
 ```
 
-The image exposes port 3000, binds to `0.0.0.0`, and contains no baked-in secrets.
+The image exposes port 3000, binds to `0.0.0.0`, and contains **no baked-in secrets** — all credentials are passed via `-e` flags at runtime.
 
 ---
 
