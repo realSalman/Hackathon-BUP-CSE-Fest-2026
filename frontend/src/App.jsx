@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import './index.css'
 import SAMPLES from './samples.json'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+const API = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3000')
 
 function App() {
   const [health, setHealth] = useState(null)

@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "backend/server.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "/backend/server.js"
+    },
+    {
+      "source": "/optimize-energy",
+      "destination": "/backend/server.js"
+    },
+    {
+      "source": "/(assets/.*|.*\\.svg|.*\\.ico|.*\\.png|.*\\.json)",
+      "destination": "/frontend/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/frontend/index.html"
+    }
+  ]
+}

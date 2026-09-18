@@ -132,6 +132,10 @@ app.use((_req, res) => {
 
 // ─── Start server ───────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT, 10) || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`GridWise LLM server listening on 0.0.0.0:${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`GridWise LLM server listening on 0.0.0.0:${PORT}`);
+  });
+}
+
+module.exports = app;
