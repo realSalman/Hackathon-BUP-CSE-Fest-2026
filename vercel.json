@@ -5,7 +5,7 @@
       "src": "backend/server.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": "node_modules/glpk.js/**/*.wasm",
+        "includeFiles": ["node_modules/glpk.js/**/*.wasm", "backend/node_modules/glpk.js/**/*.wasm"],
         "maxDuration": 60
       }
     },

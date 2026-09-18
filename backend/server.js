@@ -121,7 +121,7 @@ app.post('/optimize-energy', async (req, res) => {
     });
   } catch (err) {
     console.error('Unhandled error in /optimize-energy:', err);
-    return res.status(500).json({ error: 'Internal server error.' });
+    return res.status(500).json({ error: 'Internal server error.', message: err.message, stack: err.stack });
   }
 });
 
