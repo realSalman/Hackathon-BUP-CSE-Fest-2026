@@ -19,6 +19,43 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'google/gemini-2.0-flas
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
+// ─── In-memory response cache ──────────────────────────────────────────────────
+// Keyed on a hash of (operatorNotes + battery). Avoids redundant LLM calls for
+// repeated identical requests, drastically reducing p95 latency.
+const _cache = new Map();
+const CACHE_MAX = 200;
+
+function cacheKey(operatorNotes, battery) {
+  return JSON.stringify({ n: operatorNotes, b: battery });
+}
+
+function cacheGet(key) {
+  if (!_cache.has(key)) return null;
+  // Move to end (LRU)
+  const val = _cache.get(key);
+  _cache.delete(key);
+  _cache.set(key, val);
+  return val;
+}
+
+function cacheSet(key, val) {
+  if (_cache.size >= CACHE_MAX) {
+    // Evict oldest
+    _cache.delete(_cache.keys().next().value);
+  }
+  _cache.set(key, val);
+}
+
+// ─── Per-call timeout wrapper ──────────────────────────────────────────────────
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 // ─── Provider: OpenRouter ──────────────────────────────────────────────────────
 
 async function callOpenRouter(prompt) {
@@ -87,12 +124,20 @@ async function callGemini(prompt) {
  * @returns {object[]}              – raw interpretation array (to be guardrailed)
  */
 async function interpretNotes(operatorNotes, battery) {
+  // ── Cache check ────────────────────────────────────────────────────────────
+  const key = cacheKey(operatorNotes, battery);
+  const cached = cacheGet(key);
+  if (cached) {
+    console.log('  [Cache] HIT — skipping LLM call');
+    return cached;
+  }
+
   const prompt = buildPrompt(operatorNotes, battery);
 
-  // Build provider list: OpenRouter first (better rate limits), Gemini as fallback
+  // Build provider list: Gemini first (lower cold-start latency), OpenRouter as fallback
   const providers = [];
-  if (OPENROUTER_API_KEY) providers.push({ name: 'OpenRouter', fn: () => callOpenRouter(prompt) });
-  if (GEMINI_API_KEY)     providers.push({ name: 'Gemini',     fn: () => callGemini(prompt) });
+  if (GEMINI_API_KEY)     providers.push({ name: 'Gemini',     fn: () => withTimeout(callGemini(prompt), 25000, 'Gemini') });
+  if (OPENROUTER_API_KEY) providers.push({ name: 'OpenRouter', fn: () => withTimeout(callOpenRouter(prompt), 25000, 'OpenRouter') });
 
   if (providers.length === 0) {
     throw new Error('No LLM API keys configured. Set OPENROUTER_API_KEY or GEMINI_API_KEY.');
@@ -101,13 +146,16 @@ async function interpretNotes(operatorNotes, battery) {
   let lastError;
 
   for (const provider of providers) {
-    // Retry each provider up to 3 times with exponential backoff
-    const MAX_RETRIES = 3;
+    // Retry each provider up to 2 times (reduced to stay within 30s budget)
+    const MAX_RETRIES = 2;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const text = await provider.fn();
         console.log(`  [${provider.name}] raw response (${text.length} chars): ${text.slice(0, 200)}...`);
-        return parseResponse(text);
+        const result = parseResponse(text);
+        // Store in cache for next time
+        cacheSet(key, result);
+        return result;
       } catch (err) {
         lastError = err;
         const msg = err.message || '';
@@ -115,7 +163,7 @@ async function interpretNotes(operatorNotes, battery) {
           msg.includes('ECONNRESET') || msg.includes('fetch failed') || msg.includes('rate');
 
         if (isTransient && attempt < MAX_RETRIES - 1) {
-          const delayMs = Math.min(2000 * Math.pow(2, attempt), 15000);
+          const delayMs = Math.min(1000 * Math.pow(2, attempt), 5000);
           console.log(`  [${provider.name}] retry ${attempt + 1}/${MAX_RETRIES} after ${delayMs}ms...`);
           await new Promise(r => setTimeout(r, delayMs));
           continue;
