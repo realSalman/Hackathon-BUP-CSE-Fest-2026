@@ -33,7 +33,7 @@ async function main() {
   }
 
   // ── Load sample cases ─────────────────────────────────────────────────────
-  const casesPath = path.join(__dirname, 'BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json');
+  const casesPath = path.join(__dirname, '..', 'hackathon-Problem', 'BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json');
   const pack = JSON.parse(fs.readFileSync(casesPath, 'utf-8'));
   const cases = pack.cases;
 

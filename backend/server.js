@@ -56,24 +56,55 @@ app.post('/optimize-energy', async (req, res) => {
       }
     }
 
-    // ── 2. LLM Interpretation ───────────────────────────────────────────────
-    let rawInterpretations;
-    try {
-      rawInterpretations = await interpretNotes(operator_notes, battery);
-    } catch (llmErr) {
-      console.error('LLM interpretation error:', llmErr.message);
-      // Safe fallback: treat all notes as no_op
-      rawInterpretations = operator_notes.map((_, i) => ({
-        note_index: i,
-        applies: false,
-        directive_type: 'no_op',
-        structured_adjustment: null,
-        explanation: 'LLM interpretation failed; treated as no_op for safety.',
-      }));
-    }
+    // ── 2. LLM Interpretation + 3. Guardrails (with retry) ────────────────
+    let interpretations;
+    const MAX_LLM_ATTEMPTS = 3;
 
-    // ── 3. Deterministic Guardrails ─────────────────────────────────────────
-    const interpretations = validateInterpretations(rawInterpretations, operator_notes, battery);
+    for (let attempt = 0; attempt < MAX_LLM_ATTEMPTS; attempt++) {
+      let rawInterpretations;
+      try {
+        rawInterpretations = await interpretNotes(operator_notes, battery);
+      } catch (llmErr) {
+        console.error(`LLM interpretation error (attempt ${attempt + 1}):`, llmErr.message);
+        if (attempt < MAX_LLM_ATTEMPTS - 1) {
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        // Final fallback: treat all notes as no_op
+        rawInterpretations = operator_notes.map((_, i) => ({
+          note_index: i,
+          applies: false,
+          directive_type: 'no_op',
+          structured_adjustment: null,
+          explanation: 'LLM interpretation failed; treated as no_op for safety.',
+        }));
+      }
+
+      // Deterministic Guardrails
+      interpretations = validateInterpretations(rawInterpretations, operator_notes, battery);
+
+      // Check if guardrails demoted any interpretation (sign of LLM flake)
+      const hasDemoted = interpretations.some(
+        (interp, i) => interp.directive_type === 'no_op' &&
+          interp.explanation && (
+            interp.explanation.includes('Validation failed') ||
+            interp.explanation.includes('could not be validated') ||
+            interp.explanation.includes('Unsupported directive') ||
+            interp.explanation.includes('Missing structured_adjustment') ||
+            interp.explanation.includes('No valid hours')
+          )
+      );
+
+      if (!hasDemoted || attempt >= MAX_LLM_ATTEMPTS - 1) {
+        if (hasDemoted && attempt >= MAX_LLM_ATTEMPTS - 1) {
+          console.warn(`Guardrail demotion persisted after ${MAX_LLM_ATTEMPTS} attempts.`);
+        }
+        break;
+      }
+
+      console.log(`Guardrails demoted an interpretation (attempt ${attempt + 1}), retrying LLM...`);
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+    }
 
     // ── 4. Optimize ─────────────────────────────────────────────────────────
     const result = await optimize(hours, battery, interpretations);

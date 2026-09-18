@@ -15,7 +15,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 // ─── Provider configuration ────────────────────────────────────────────────────
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'google/gemini-2.0-flash-001';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
@@ -32,10 +32,12 @@ async function callOpenRouter(prompt) {
     },
     body: JSON.stringify({
       model: OPENROUTER_MODEL,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [
+        { role: 'system', content: 'You are a precise JSON-only energy directive classifier. Return ONLY a valid JSON array. No thinking, no explanation, no markdown.' },
+        { role: 'user', content: prompt }
+      ],
       temperature: 0,
-      max_tokens: 2048,
-      response_format: { type: 'json_object' },
+      max_tokens: 4096,
     }),
   });
 
@@ -104,6 +106,7 @@ async function interpretNotes(operatorNotes, battery) {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const text = await provider.fn();
+        console.log(`  [${provider.name}] raw response (${text.length} chars): ${text.slice(0, 200)}...`);
         return parseResponse(text);
       } catch (err) {
         lastError = err;
@@ -133,18 +136,43 @@ function parseResponse(text) {
   let json = text.trim();
 
   // Strip accidental code fences
-  if (json.startsWith('```')) {
-    json = json.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+  if (json.includes('```')) {
+    const match = json.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (match) json = match[1].trim();
+    else json = json.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
   }
 
-  const parsed = JSON.parse(json);
+  // Try to extract a JSON array from the text (handles thinking models that emit text before JSON)
+  // Look for the outermost [...] in the string
+  const arrStart = json.indexOf('[');
+  const arrEnd = json.lastIndexOf(']');
+  if (arrStart !== -1 && arrEnd > arrStart) {
+    const candidate = json.slice(arrStart, arrEnd + 1);
+    try {
+      const arr = JSON.parse(candidate);
+      if (Array.isArray(arr)) return arr;
+    } catch { /* fall through */ }
+  }
 
-  // Accept either a plain array or { interpretations: [...] } or nested
+  // Try to extract a JSON object { ... } (wrapper like { interpretations: [...] })
+  const objStart = json.indexOf('{');
+  const objEnd = json.lastIndexOf('}');
+  if (objStart !== -1 && objEnd > objStart) {
+    const candidate = json.slice(objStart, objEnd + 1);
+    try {
+      const obj = JSON.parse(candidate);
+      if (Array.isArray(obj)) return obj;
+      if (obj.interpretations) return obj.interpretations;
+      if (obj.directive_interpretation) return obj.directive_interpretation;
+      if (obj.note_index !== undefined) return [obj];
+    } catch { /* fall through */ }
+  }
+
+  // Last resort: plain JSON.parse
+  const parsed = JSON.parse(json);
   if (Array.isArray(parsed)) return parsed;
   if (parsed.interpretations) return parsed.interpretations;
   if (parsed.directive_interpretation) return parsed.directive_interpretation;
-
-  // Last resort: if it's an object with note_index, wrap in array
   if (parsed.note_index !== undefined) return [parsed];
 
   throw new Error('LLM response is not a recognisable interpretation array');
