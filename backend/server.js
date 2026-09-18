@@ -41,19 +41,39 @@ app.post('/optimize-energy', async (req, res) => {
     if (!Array.isArray(hours) || hours.length !== 24) {
       return res.status(400).json({ error: 'hours must contain exactly 24 entries.' });
     }
+    const hourSet = new Set();
     for (let i = 0; i < 24; i++) {
       const h = hours[i];
       if (h == null || typeof h.hour !== 'number' || typeof h.demand_kwh !== 'number' ||
         typeof h.solar_kwh !== 'number' || typeof h.tariff_bdt_per_kwh !== 'number') {
         return res.status(400).json({ error: `hours[${i}] missing or has invalid fields.` });
       }
+      if (!Number.isInteger(h.hour) || h.hour < 0 || h.hour > 23) {
+        return res.status(400).json({ error: `hours[${i}].hour must be an integer 0-23.` });
+      }
+      if (hourSet.has(h.hour)) {
+        return res.status(400).json({ error: `hours contains duplicate hour value ${h.hour}.` });
+      }
+      hourSet.add(h.hour);
+      if (h.demand_kwh < 0 || h.solar_kwh < 0 || h.tariff_bdt_per_kwh < 0) {
+        return res.status(400).json({ error: `hours[${i}] contains negative numeric values.` });
+      }
     }
     const requiredBatteryFields = ['capacity_kwh', 'initial_energy_kwh', 'minimum_energy_kwh',
       'max_charge_kwh_per_hour', 'max_discharge_kwh_per_hour'];
     for (const f of requiredBatteryFields) {
-      if (typeof battery[f] !== 'number') {
-        return res.status(400).json({ error: `battery.${f} is missing or not a number.` });
+      if (typeof battery[f] !== 'number' || !Number.isFinite(battery[f])) {
+        return res.status(400).json({ error: `battery.${f} is missing or not a finite number.` });
       }
+      if (battery[f] < 0) {
+        return res.status(400).json({ error: `battery.${f} must be non-negative.` });
+      }
+    }
+    if (battery.initial_energy_kwh > battery.capacity_kwh) {
+      return res.status(400).json({ error: 'battery.initial_energy_kwh cannot exceed capacity_kwh.' });
+    }
+    if (battery.minimum_energy_kwh > battery.capacity_kwh) {
+      return res.status(400).json({ error: 'battery.minimum_energy_kwh cannot exceed capacity_kwh.' });
     }
 
     // ── 2. LLM Interpretation + 3. Guardrails (with retry) ────────────────

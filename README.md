@@ -141,10 +141,12 @@ Create `backend/.env` from `backend/.env.example`. **Never commit `.env` — it 
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `OPENROUTER_API_KEY` | ✅ (or Gemini) | — | OpenRouter API key (primary provider) |
-| `GEMINI_API_KEY` | ✅ (or OpenRouter) | — | Google Gemini API key (fallback provider) |
-| `OPENROUTER_MODEL` | ❌ | `google/gemini-2.5-flash` | OpenRouter model ID |
-| `GEMINI_MODEL` | ❌ | `gemini-3.6-flash` | Gemini model ID |
+| `GROQ_API_KEY` | ✅ (recommended) | — | Groq API key (primary — fastest, ~1-2s) |
+| `OPENROUTER_API_KEY` | ✅ (or Groq/Gemini) | — | OpenRouter API key (fallback provider) |
+| `GEMINI_API_KEY` | ✅ (or Groq/OpenRouter) | — | Google Gemini API key (fallback provider) |
+| `GROQ_MODEL` | ❌ | `llama-3.3-70b-versatile` | Groq model ID |
+| `OPENROUTER_MODEL` | ❌ | `google/gemini-2.0-flash-001` | OpenRouter model ID |
+| `GEMINI_MODEL` | ❌ | `gemini-2.0-flash` | Gemini model ID |
 | `PORT` | ❌ | `3000` | HTTP server port |
 
 ### Secret Handling

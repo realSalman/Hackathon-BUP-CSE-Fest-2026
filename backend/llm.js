@@ -2,8 +2,9 @@
  * llm.js — Multi-provider LLM operator-note interpreter
  *
  * Supports:
- *   1. OpenRouter (primary — no harsh free-tier rate limits)
- *   2. Google Gemini (fallback)
+ *   1. Groq  (primary — ultra-fast inference, ~1-2s)
+ *   2. Gemini (fallback)
+ *   3. OpenRouter (final fallback)
  *
  * Sends operator notes + battery context to the LLM and returns structured
  * JSON interpretations.  Output is validated by guardrails.js before the
@@ -14,10 +15,12 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ─── Provider configuration ────────────────────────────────────────────────────
 
+const GROQ_API_KEY    = process.env.GROQ_API_KEY;
+const GROQ_MODEL      = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GEMINI_API_KEY  = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL    = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'google/gemini-2.0-flash-001';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const OPENROUTER_MODEL   = process.env.OPENROUTER_MODEL || 'google/gemini-2.0-flash-001';
 
 // ─── In-memory response cache ──────────────────────────────────────────────────
 // Keyed on a hash of (operatorNotes + battery). Avoids redundant LLM calls for
@@ -54,6 +57,35 @@ function withTimeout(promise, ms, label) {
       setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
     ),
   ]);
+}
+
+// ─── Provider: Groq (primary — ultra-fast) ────────────────────────────────────
+
+async function callGroq(prompt) {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [
+        { role: 'system', content: 'You are a precise JSON-only energy directive classifier. Return ONLY a valid JSON array. No markdown, no code fences, no surrounding text.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0,
+      max_tokens: 4096,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Groq ${res.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
 }
 
 // ─── Provider: OpenRouter ──────────────────────────────────────────────────────
@@ -134,9 +166,10 @@ async function interpretNotes(operatorNotes, battery) {
 
   const prompt = buildPrompt(operatorNotes, battery);
 
-  // Build provider list: Gemini first (lower cold-start latency), OpenRouter as fallback
+  // Provider chain: Groq (fastest ~1-2s) → Gemini → OpenRouter
   const providers = [];
-  if (GEMINI_API_KEY)     providers.push({ name: 'Gemini',     fn: () => withTimeout(callGemini(prompt), 25000, 'Gemini') });
+  if (GROQ_API_KEY)       providers.push({ name: 'Groq',       fn: () => withTimeout(callGroq(prompt),       10000, 'Groq') });
+  if (GEMINI_API_KEY)     providers.push({ name: 'Gemini',     fn: () => withTimeout(callGemini(prompt),     25000, 'Gemini') });
   if (OPENROUTER_API_KEY) providers.push({ name: 'OpenRouter', fn: () => withTimeout(callOpenRouter(prompt), 25000, 'OpenRouter') });
 
   if (providers.length === 0) {
@@ -243,36 +276,55 @@ Your ONLY job is to classify each operator note into exactly one supported direc
 
 1. **solar_reduction** — Usable solar output is reduced during specific hours.
    structured_adjustment: {"hours": [int, ...], "factor": number}
-   - "factor" is the FRACTION OF SOLAR THAT REMAINS USABLE (not the fraction removed).
-   - "80% reduction" means only 20% remains → factor = 0.20
+   - "factor" = the FRACTION OF SOLAR THAT REMAINS USABLE (NOT the fraction removed).
+   - "80% reduction" → only 20% remains → factor = 0.20
    - "drops to about 25%" → factor = 0.25
-   - "roughly one-fifth of normal" → factor = 0.20
+   - "roughly one-fifth of normal output" → factor = 0.20
    - "half of the forecast" → factor = 0.50
+   - "PV drops to 30%" → factor = 0.30
+   - "expect an 80% drop in rooftop solar" → factor = 0.20
+   - "solar availability reduced to one-quarter" → factor = 0.25
+   - "panels produce approximately 40% of rated capacity" → factor = 0.40
+   - Triggered by: panel washing, cleaning, maintenance, shading, dust, obstruction, inspection
 
 2. **minimum_battery_reserve** — Battery energy must stay at or above a level during specific hours.
    structured_adjustment: {"hours": [int, ...], "minimum_energy_kwh": number}
-   - If stated as a percentage of capacity, compute the absolute kWh value.
-   - Example: "50% of capacity" with capacity ${battery.capacity_kwh} → minimum_energy_kwh = ${battery.capacity_kwh * 0.5}
+   - If stated as a percentage: multiply by capacity_kwh = ${battery.capacity_kwh}
+   - "keep at least 120 kWh in reserve" → minimum_energy_kwh = 120
+   - "battery must not drop below 50% during peak hours" → minimum_energy_kwh = ${battery.capacity_kwh * 0.5}
+   - "ensure at least 40% charge is maintained" → minimum_energy_kwh = ${battery.capacity_kwh * 0.4}
+   - "maintain a minimum of 80 kWh from 6 PM to 10 PM" → minimum_energy_kwh = 80
+   - "keep 30% of capacity reserved overnight" → minimum_energy_kwh = ${battery.capacity_kwh * 0.3}
+   - Triggered by: reserve, minimum charge, emergency buffer, backup power requirement
 
 3. **no_charge_window** — Battery charging is forbidden during specific hours.
    structured_adjustment: {"hours": [int, ...]}
-   - Triggered by: charger isolated, charging disabled, charger maintenance, charging circuit unavailable, etc.
+   - Triggered by: charger isolated, charging disabled, charger maintenance, charging circuit unavailable,
+     do not charge, suspend charging, charging prohibited, charger offline, inhibit charging
+   - Example: "Do not charge the battery between 2 PM and 4 PM" → hours [14, 15]
 
 4. **no_discharge_window** — Battery discharging is forbidden during specific hours.
    structured_adjustment: {"hours": [int, ...]}
-   - Triggered by: must not discharge, discharge disabled, protection testing, relay testing, etc.
+   - Triggered by: must not discharge, discharge disabled, discharge prohibited, battery protection testing,
+     relay testing, discharge inhibited, keep battery from discharging, battery in standby mode
+   - Example: "Battery cannot discharge from 8 AM to 10 AM" → hours [8, 9]
 
 5. **max_grid_window** — Grid import is capped at a maximum kWh per hour during specific hours.
    structured_adjustment: {"hours": [int, ...], "max_grid_kwh": number}
-   - Triggered by: feeder limit, transformer limit, grid cap, substation constraint, etc.
+   - Triggered by: feeder limit, transformer limit, grid cap, substation constraint, demand limit,
+     grid import restriction, maximum draw, peak demand limit, grid power limited to X kWh/hour
+   - Example: "Limit grid draw to 150 kWh per hour from 5 PM to 9 PM" → hours [17,18,19,20], max_grid_kwh=150
 
 6. **no_op** — The note does NOT affect the 24-hour energy schedule at all.
-   structured_adjustment: null
-   - Triggered by: cafeteria, sports, library, seminars, bookings, administrative matters, club notices, registration deadlines, book returns, room bookings, or anything unrelated to solar/battery/grid/energy.
+   structured_adjustment: null, applies: false
+   - Triggered by: cafeteria, dining, sports, library, seminars, conferences, bookings, administration,
+     club notices, registration deadlines, book returns, room bookings, parking, events, IT systems,
+     HR announcements, student affairs, payroll, campus tours, or ANYTHING unrelated to solar/battery/grid/energy.
+   - When in doubt whether a note is energy-related, lean toward no_op.
 
-## Time-window convention (CRITICAL)
+## Time-window convention (CRITICAL — READ CAREFULLY)
 - Windows are START-INCLUSIVE, END-EXCLUSIVE.
-- "from 1 PM to 3 PM" → hours [13, 14]     (NOT [13, 14, 15])
+- "from 1 PM to 3 PM" → hours [13, 14]     ← NOT [13, 14, 15]
 - "from 6 PM until 9 PM" → hours [18, 19, 20]
 - "from 6 PM until 10 PM" → hours [18, 19, 20, 21]
 - "from 2 AM until 5 AM" → hours [2, 3, 4]
@@ -281,6 +333,10 @@ Your ONLY job is to classify each operator note into exactly one supported direc
 - "between 2 PM and 4 PM" → hours [14, 15]
 - "between 13:00 and 15:00" → hours [13, 14]
 - "during the 1-3 PM window" → hours [13, 14]
+- "from one until three PM" → hours [13, 14]
+- "from 7 PM to 11 PM" → hours [19, 20, 21, 22]
+- "during peak hours 17:00-21:00" → hours [17, 18, 19, 20]
+- "overnight from 11 PM to 5 AM" → hours [23, 0, 1, 2, 3, 4]  ← sorted ascending: [0,1,2,3,4,23]
 - Hours must be unique integers 0-23 in ascending order.
 
 ## Notes to interpret
@@ -291,7 +347,7 @@ Return a JSON array of exactly ${notes.length} objects, one per note IN ORDER.
 Each object:
 {
   "note_index": <int 0-based>,
-  "applies": <boolean — false ONLY for no_op, true for all others>,
+  "applies": <boolean — false ONLY for no_op, true for ALL other directive types>,
   "directive_type": "<one of the 6 types>",
   "structured_adjustment": <the exact object for that type, or null for no_op>,
   "explanation": "<1-2 sentence explanation>"
