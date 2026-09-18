@@ -1,59 +1,8 @@
 import { useState, useEffect } from 'react'
 import './index.css'
+import SAMPLES from './samples.json'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-
-// ─── Sample cases (embedded for quick testing) ──────────────────────────────────
-const SAMPLES = [
-  {
-    id: 'SAMPLE-01', label: 'Solar cleaning + distractor',
-    input: {
-      scenario_id: 'SAMPLE-01',
-      operator_notes: [
-        'Facilities will wash the rooftop solar panels from noon until 2 PM. During cleaning, usable solar should be treated as roughly 25% of the forecast.',
-        'The sports office moved next month\'s registration deadline.'
-      ],
-      hours: Array.from({ length: 24 }, (_, h) => ({
-        hour: h,
-        demand_kwh: [90,85,80,80,85,95,110,130,150,165,175,180,185,180,170,165,170,185,205,215,205,175,135,105][h],
-        solar_kwh: [0,0,0,0,0,0,5,20,50,90,130,160,180,170,140,90,45,10,0,0,0,0,0,0][h],
-        tariff_bdt_per_kwh: [6,6,5,5,5,6,8,10,12,14,16,17,16,15,14,15,19,24,30,34,31,21,11,8][h]
-      })),
-      battery: { capacity_kwh: 220, initial_energy_kwh: 110, minimum_energy_kwh: 40, max_charge_kwh_per_hour: 50, max_discharge_kwh_per_hour: 50 }
-    }
-  },
-  {
-    id: 'SAMPLE-02', label: 'Battery charging maintenance',
-    input: {
-      scenario_id: 'SAMPLE-02',
-      operator_notes: ['The battery charger unit will be isolated for preventive maintenance from 2 AM until 5 AM.'],
-      hours: Array.from({ length: 24 }, (_, h) => ({
-        hour: h,
-        demand_kwh: [100,95,90,90,95,105,120,140,155,170,180,190,195,190,175,170,175,190,210,225,215,185,145,115][h],
-        solar_kwh: [0,0,0,0,0,0,5,25,55,95,135,170,190,175,145,95,50,10,0,0,0,0,0,0][h],
-        tariff_bdt_per_kwh: [7,6,5,5,5,6,8,10,12,14,16,17,16,15,14,15,19,24,30,34,31,21,11,8][h]
-      })),
-      battery: { capacity_kwh: 200, initial_energy_kwh: 100, minimum_energy_kwh: 30, max_charge_kwh_per_hour: 55, max_discharge_kwh_per_hour: 55 }
-    }
-  },
-  {
-    id: 'SAMPLE-04', label: 'No-discharge protection test',
-    input: {
-      scenario_id: 'SAMPLE-04',
-      operator_notes: [
-        'Relay protection testing is scheduled from 6 PM to 8 PM. The battery must not discharge during that time.',
-        'A library book return reminder went out to all departments.'
-      ],
-      hours: Array.from({ length: 24 }, (_, h) => ({
-        hour: h,
-        demand_kwh: [95,90,85,85,90,100,115,135,150,165,175,185,190,185,170,165,170,190,210,220,210,180,140,110][h],
-        solar_kwh: [0,0,0,0,0,0,5,20,55,100,140,175,195,180,150,100,50,10,0,0,0,0,0,0][h],
-        tariff_bdt_per_kwh: [6,6,5,5,5,6,8,10,12,14,16,17,16,15,14,15,19,24,30,34,31,21,11,8][h]
-      })),
-      battery: { capacity_kwh: 230, initial_energy_kwh: 115, minimum_energy_kwh: 35, max_charge_kwh_per_hour: 55, max_discharge_kwh_per_hour: 55 }
-    }
-  }
-]
 
 function App() {
   const [health, setHealth] = useState(null)
@@ -87,7 +36,7 @@ function App() {
     setSelectedSample(idx)
     const sample = SAMPLES[parseInt(idx)]
     setScenarioId(sample.input.scenario_id)
-    setNotes(sample.input.operator_notes)
+    setNotes(sample.input.operator_notes && sample.input.operator_notes.length ? [...sample.input.operator_notes] : [''])
     setError(null)
     setResult(null)
   }
@@ -101,7 +50,11 @@ function App() {
 
     try {
       const sample = selectedSample !== '' ? SAMPLES[parseInt(selectedSample)] : null
-      const body = sample ? sample.input : {
+      const body = sample ? {
+        ...sample.input,
+        scenario_id: scenarioId,
+        operator_notes: notes.filter(n => n.trim())
+      } : {
         scenario_id: scenarioId,
         operator_notes: notes.filter(n => n.trim()),
         hours: Array.from({ length: 24 }, (_, h) => ({
@@ -134,13 +87,13 @@ function App() {
     <>
       <header className="header">
         <div className="header-brand">
-          <div className="logo">⚡</div>
+          <div className="logo">GW</div>
           <h1>GridWise LLM</h1>
           <span className="badge">BUP CSE Fest 2026</span>
         </div>
         <div className="header-status">
           <div className={`health-dot ${health || ''}`} />
-          <span>{health === 'ok' ? 'Backend Connected' : health === 'error' ? 'Backend Offline' : 'Checking...'}</span>
+          <span>{health === 'ok' ? 'Online' : health === 'error' ? 'Offline' : 'Connecting'}</span>
         </div>
       </header>
 
@@ -149,22 +102,43 @@ function App() {
         <aside className="sidebar">
           <div className="card">
             <div className="card-header">
-              <h3>📋 Quick Load Sample</h3>
+              <h3>Quick Load Sample</h3>
+              <span className="sample-counter">{SAMPLES.length} Cases</span>
             </div>
             <div className="card-body">
-              <select className="sample-select" value={selectedSample} onChange={e => loadSample(e.target.value)}>
-                <option value="">Select a sample case...</option>
-                {SAMPLES.map((s, i) => (
-                  <option key={s.id} value={i}>{s.id}: {s.label}</option>
-                ))}
-              </select>
+              <div className="select-wrapper">
+                <select
+                  className="sample-select"
+                  value={selectedSample}
+                  onChange={e => loadSample(e.target.value)}
+                >
+                  <option value="">Select from {SAMPLES.length} sample scenarios...</option>
+                  {SAMPLES.map((s, i) => (
+                    <option key={s.id} value={i}>
+                      {s.id}: {s.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="select-arrow">
+                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
+                    <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </div>
+              {selectedSample !== '' && SAMPLES[parseInt(selectedSample)] && (
+                <div className="sample-meta">
+                  <div className="meta-pill">Battery: {SAMPLES[parseInt(selectedSample)].input.battery.capacity_kwh} kWh</div>
+                  <div className="meta-pill">Max C/D: {SAMPLES[parseInt(selectedSample)].input.battery.max_charge_kwh_per_hour} kW</div>
+                  <div className="meta-pill">{SAMPLES[parseInt(selectedSample)].input.operator_notes.length} note(s)</div>
+                </div>
+              )}
             </div>
           </div>
 
           <form onSubmit={handleSubmit}>
             <div className="card">
               <div className="card-header">
-                <h3>⚙️ Scenario Configuration</h3>
+                <h3>Scenario Configuration</h3>
               </div>
               <div className="card-body">
                 <div className="form-group">
@@ -172,22 +146,48 @@ function App() {
                   <input type="text" value={scenarioId} onChange={e => setScenarioId(e.target.value)} placeholder="SAMPLE-01" />
                 </div>
 
-                <div className="form-group">
-                  <label>Operator Note 1</label>
-                  <textarea value={notes[0] || ''} onChange={e => { const n = [...notes]; n[0] = e.target.value; setNotes(n) }}
-                    placeholder="e.g. Solar panels being cleaned from noon until 2 PM..." rows={3} />
-                </div>
+                {notes.map((note, idx) => (
+                  <div className="form-group" key={idx}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <label style={{ margin: 0 }}>Operator Note {idx + 1}</label>
+                      {notes.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setNotes(notes.filter((_, i) => i !== idx))}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      value={note}
+                      onChange={e => {
+                        const next = [...notes]
+                        next[idx] = e.target.value
+                        setNotes(next)
+                      }}
+                      placeholder={`Enter operator note ${idx + 1}...`}
+                      rows={3}
+                    />
+                  </div>
+                ))}
 
-                <div className="form-group">
-                  <label>Operator Note 2 (optional)</label>
-                  <textarea value={notes[1] || ''} onChange={e => { const n = [...notes]; n[1] = e.target.value; setNotes(n) }}
-                    placeholder="e.g. Library book return reminder..." rows={3} />
-                </div>
+                {notes.length < 3 && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setNotes([...notes, ''])}
+                    style={{ marginBottom: 16, width: '100%' }}
+                  >
+                    + Add Operator Note
+                  </button>
+                )}
 
-                {error && <div className="error-box">❌ {error}</div>}
+                {error && <div className="error-box">{error}</div>}
 
                 <button type="submit" className="btn btn-primary" disabled={loading || health !== 'ok'}>
-                  {loading ? '⏳ Optimizing...' : '🚀 Run Optimization'}
+                  {loading ? 'Optimizing...' : 'Run Optimization'}
                 </button>
               </div>
             </div>
@@ -205,9 +205,9 @@ function App() {
 
           {!loading && !result && (
             <div className="empty-state">
-              <div className="icon">⚡</div>
+              <div className="icon">//</div>
               <h2>No Results Yet</h2>
-              <p>Load a sample case or configure your own scenario, then click "Run Optimization" to see the 24-hour energy plan.</p>
+              <p>Load a sample case or configure your own scenario, then run optimization to generate the 24-hour energy schedule.</p>
             </div>
           )}
 
@@ -215,15 +215,15 @@ function App() {
             <>
               {/* Stats */}
               <div className="stats-row">
-                <div className="stat-card accent">
+                <div className="stat-card">
                   <div className="stat-label">Total Cost</div>
                   <div className="stat-value">{result.total_cost_bdt?.toLocaleString()}<span className="stat-unit">BDT</span></div>
                 </div>
-                <div className="stat-card green">
+                <div className="stat-card">
                   <div className="stat-label">Total Grid</div>
                   <div className="stat-value">{result.total_grid_kwh?.toLocaleString()}<span className="stat-unit">kWh</span></div>
                 </div>
-                <div className="stat-card amber">
+                <div className="stat-card">
                   <div className="stat-label">Peak Grid Hour</div>
                   <div className="stat-value">{result.peak_grid_kwh}<span className="stat-unit">kWh</span></div>
                 </div>
@@ -235,22 +235,22 @@ function App() {
               )}
 
               {/* Directives */}
-              <div className="card" style={{ marginBottom: 24 }}>
+              <div className="card" style={{ marginBottom: 20 }}>
                 <div className="card-header">
-                  <h3>🧠 LLM Directive Interpretation</h3>
+                  <h3>LLM Directive Interpretation</h3>
                 </div>
                 <div className="card-body">
                   <div className="directives">
                     {result.directive_interpretation?.map((d, i) => (
                       <div className="directive-pill" key={i}>
                         <span className={`directive-badge ${d.applies ? 'applies' : 'no-op'}`}>
-                          {d.applies ? '✓ Applied' : '— No-op'}
+                          {d.applies ? 'Applied' : 'No-op'}
                         </span>
                         <div>
                           <div className="directive-type">{d.directive_type}</div>
                           <div className="directive-explain">{d.explanation}</div>
                           {d.structured_adjustment && (
-                            <div className="directive-explain" style={{ fontFamily: "'JetBrains Mono', monospace", marginTop: 4, color: 'var(--text-muted)' }}>
+                            <div className="directive-explain" style={{ fontFamily: "var(--font-mono)", marginTop: 4, color: 'var(--text-muted)' }}>
                               {JSON.stringify(d.structured_adjustment)}
                             </div>
                           )}
@@ -264,7 +264,7 @@ function App() {
               {/* Hourly Plan Table */}
               <div className="card">
                 <div className="card-header">
-                  <h3>📊 24-Hour Energy Plan</h3>
+                  <h3>24-Hour Energy Plan</h3>
                 </div>
                 <div className="table-wrap">
                   <table>
